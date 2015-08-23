@@ -1,0 +1,122 @@
+Machine Learning
+=============================================
+#Synopsis
+
+In this project, data is collected from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. The goal is to predict the manner in which they did the exercise. This is the "classe" variable in the training set. 20 different test cases need to be predicted using the model. 
+
+#Setup
+
+```{r setoptions, echo=TRUE}
+library(knitr)
+opts_chunk$set(echo=TRUE, cache=TRUE)
+```
+
+```{r results='hide'}
+library(ggplot2)
+library(caret)
+library(randomForest)
+```
+
+
+#Aquire and explore data
+
+```{r}
+download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv", 
+              destfile="pml-training.csv",method="curl")
+download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv", 
+              destfile="pml-testing.csv",method="curl")
+pml_training<-read.csv("pml-training.csv")
+pml_testing<-read.csv("pml-testing.csv")
+dim(pml_training)
+head(pml_training)
+# Remove the columns with NA in.
+training <- pml_training[, colSums(is.na(pml_training)) == 0] 
+testing <- pml_testing[, colSums(is.na(pml_testing)) == 0] 
+#Some columns don't help with the prediction, such as time, names, windows. Remove them.
+training$user_name<-NULL
+testing$user_name<-NULL
+colRemove<-grepl("^X|timestamp|window",names(training))
+training<-training[,!colRemove]
+colRemove<-grepl("^X|timestamp|window",names(testing))
+testing<-testing[,!colRemove]
+#Some data is collected once in one set of training and that is not available in testing dataset. Hence it is not useful for this prediction. They are factor types. Remove them.
+classe<-training$classe
+training <- training[, !sapply(training, is.factor)]
+training$classe<-classe
+dim(training)
+dim(testing)
+str(training)
+str(testing)
+```
+The cleaned training dataset has 53 variables including classe. The testing set has 53 variables. It doesn't have classe, but prooblem_id instead.
+
+#Slice Data 
+```{r}
+set.seed(33833)
+inTrain <- createDataPartition(training$classe, p=0.60, list=F)
+trainData<-training[inTrain,]
+testData<-training[-inTrain,]
+```
+#Build the model
+
+##CART Model
+In the begining, a simple and faster classifier is used to setup the benchmark. The CART model is used. 
+```{r}
+cartFit = train(classe ~ ., data=trainData, method="rpart") 
+```
+Evaluate the prediction.
+
+```{r}
+
+plot(cartFit$finalModel, uniform=TRUE, main="Classificatino Tree")
+text(cartFit$finalModel, use.n=TRUE, all=TRUE, cex=.8)
+predict_cartFit = predict(cartFit, testData)
+table(predict_cartFit, testData$classe)
+accuracy_cartFit = postResample(predict_cartFit, testData$classe)
+accuracy_cartFit
+```
+Accuracy of CART model is 0.49.
+
+##Random Forest Model
+After considering among Boosting, Bagging and Random Forest, I decided to use Random Forest as the classifier because the it has high accuracy. It is hard to tell if some variables are weaker than others so boosting is not considered. Ranfom Forest adds another layer of randomness to bagging. In a random Forest, each node is split using the best among a subset of predictors randomly chosen at that node. It is also robust against overfitting. 10-fold cross validation is used when applying the algorithm. The disadvantage is the speed. So the randomForest function from the randomForest package is ued  for faster computation.  
+
+```{r}
+
+RFFit <- randomForest(classe ~ ., data=trainData, importance=TRUE, proximity=TRUE)
+RFFit
+saveRDS(RFFit, "FR_file_v01.Rds")
+```
+
+Evaluate the prediction.
+
+```{r}
+predict_RF <- predict(RFFit, testData)
+accuracy <- postResample(predict_RF, testData$classe)
+accuracy
+error <- 1 - as.numeric(confusionMatrix(testData$classe, predict_RF)$overall[1])
+error
+```
+The accuracy for Random Forest Model is 0.995 and the estimated out-of-sample error is 0.49%. So Random Forest model will be used for predicting the 20 testing cases.
+
+In random forests, there is no need for cross-validation or a separate test set to get an unbiased estimate of the test set error. It is estimated internally.
+
+#Predict for testing data
+```{r}
+#Remove the column named problem_id(last column))
+result <- predict(RFFit, testing[, -length(names(testing))])
+result
+```
+#Submit the results using 20 files.
+
+```{r}
+answers <- result
+pml_write_files <- function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    i
+    write.table(x[i], file=filename, quote=FALSE, row.names=FALSE, col.names=FALSE)
+  }
+}
+pml_write_files(answers)
+```
